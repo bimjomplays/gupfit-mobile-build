@@ -94,6 +94,14 @@ final class LoggingUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Logged to today"].waitForExistence(timeout: 5))
 
         app.tabBars.buttons["Today"].tap()
-        XCTAssertTrue(app.staticTexts["Oat bowl"].firstMatch.waitForExistence(timeout: 5), "the serving is on today")
+        // the serving goes to the meal for the time of day (dinner in the evening), which can sit below the fold of
+        // the lazy list: scroll until its row exists (a test run in the evening failed without this)
+        let served = app.staticTexts["Oat bowl"].firstMatch
+        var swipes = 0
+        while !served.waitForExistence(timeout: 2) && swipes < 6 {
+            app.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(served.exists, "the serving is on today")
     }
 }
