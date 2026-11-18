@@ -178,6 +178,16 @@ final class ChatControllerTests: XCTestCase {
         XCTAssertEqual(c.state.pendingPair?.otherTailnet, false)
     }
 
+    func testConfirmingWhatWasShownWorksAfterTheAlertClearedIt() async throws {
+        let c = controller()
+        XCTAssertTrue(c.propose(link))
+        let shown = try XCTUnwrap(c.state.pendingPair)
+        c.cancelPair()  // what SwiftUI's alert binding does before the button's action runs
+        let ok = await c.confirmPair(shown)
+        XCTAssertTrue(ok)
+        XCTAssertNotNil(c.state.pc)
+    }
+
     func testABadLinkIsRefusedBeforeAsking() {
         let c = controller()
         XCTAssertFalse(c.propose("gupfit://pair?v=1&url=https%3A%2F%2Fevil.example.com&code=" + String(repeating: "c", count: 43)))

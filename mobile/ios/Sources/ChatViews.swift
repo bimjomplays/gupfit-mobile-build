@@ -103,8 +103,9 @@ struct PairPCView: View {
         .scrollDismissesKeyboard(.interactively)
         .onAppear { takeIncoming() }
         .onChange(of: chat.incomingLink) { _, _ in takeIncoming() }
-        .alert("Pair with this PC?", isPresented: confirming, presenting: chat.state.pendingPair) { _ in
-            Button("Pair") { Task { _ = await chat.confirmPair() } }
+        .alert("Pair with this PC?", isPresented: confirming, presenting: chat.state.pendingPair) { pending in
+            // the binding below has already cleared pendingPair when this runs: pair with what was shown
+            Button("Pair") { Task { _ = await chat.confirmPair(pending) } }
                 .accessibilityIdentifier("pairConfirm")
             Button("Cancel", role: .cancel) { chat.cancelPair() }
         } message: { pending in

@@ -129,6 +129,13 @@ final class ChatController {
     @discardableResult
     func confirmPair() async -> Bool {
         guard let pending = state.pendingPair else { return false }
+        return await confirmPair(pending)
+    }
+
+    /// The same for the link the question showed (SwiftUI clears the alert's binding before its button runs, so the
+    /// app passes along what it presented).
+    @discardableResult
+    func confirmPair(_ pending: PendingPair) async -> Bool {
         state.pendingPair = nil
         return await pair(pending.link)
     }

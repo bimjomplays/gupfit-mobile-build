@@ -66,7 +66,7 @@ final class ChatModel {
 
     func pair(_ text: String) async -> Bool { await controller.pair(text) }
     @discardableResult func propose(_ text: String) -> Bool { controller.propose(text) }
-    func confirmPair() async -> Bool { await controller.confirmPair() }
+    func confirmPair(_ pending: PendingPair) async -> Bool { await controller.confirmPair(pending) }
     func cancelPair() { controller.cancelPair() }
     func unpair() async { await controller.unpair() }
     func refreshModels() async { await controller.refreshModels() }
