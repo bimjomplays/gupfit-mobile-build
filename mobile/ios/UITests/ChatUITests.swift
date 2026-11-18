@@ -82,7 +82,7 @@ final class ChatUITests: XCTestCase {
         expectation(for: NSPredicate(format: "label CONTAINS %@", "10 g fat."), evaluatedWith: reply)
         waitForExpectations(timeout: 15)
         XCTAssertTrue(app.buttons["chatSend"].waitForExistence(timeout: 5))
-        app.swipeDown()  // the keyboard away for the picture
+        hideKeyboard(app)  // for the picture, and the tab bar is under it
         shot(app, "chat-log-card")
 
         app.tabBars.buttons["Today"].tap()
@@ -95,6 +95,16 @@ final class ChatUITests: XCTestCase {
         shot(app, "chat-log-undone")
         app.tabBars.buttons["Today"].tap()
         XCTAssertFalse(app.staticTexts["Egg, large"].waitForExistence(timeout: 2), "Undo took it back")
+    }
+
+    /// The chat dismisses the keyboard interactively: drag from the messages down through it.
+    private func hideKeyboard(_ app: XCUIApplication) {
+        for _ in 0..<3 where app.keyboards.firstMatch.exists {
+            let from = app.scrollViews.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+            from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.99)))
+            _ = app.keyboards.firstMatch.waitForNonExistence(timeout: 2)
+        }
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "the keyboard went away")
     }
 
     private func shot(_ app: XCUIApplication, _ name: String) {
