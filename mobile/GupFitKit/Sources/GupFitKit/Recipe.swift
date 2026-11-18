@@ -15,6 +15,14 @@ struct RecipeIngredient: Identifiable, Hashable, Codable, Sendable, Validatable 
         self.note = note
     }
 
+    /// an ingredient as it was stored
+    init(id: RecipeIngredientID, snapshot: FoodSnapshot, portion: Portion, note: String? = nil) {
+        self.id = id
+        food = snapshot
+        self.portion = portion
+        self.note = note
+    }
+
     var nutrients: NutrientProfile { food.nutrients(for: portion) }
 
     func validationIssues() -> [ValidationIssue] {

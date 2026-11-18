@@ -92,6 +92,18 @@ struct MealEntry: Identifiable, Hashable, Codable, Sendable, Validatable {
         try validate()
     }
 
+    /// an entry as it was stored (no validation: what was saved is read back as it is)
+    init(id: MealEntryID, snapshot: FoodSnapshot, portion: Portion, day: LocalDay, slot: MealSlot, loggedAt: Date,
+         note: String? = nil) {
+        self.id = id
+        food = snapshot
+        self.portion = portion
+        self.day = day
+        self.slot = slot
+        self.loggedAt = loggedAt
+        self.note = note
+    }
+
     /// what this entry adds to the day
     var nutrients: NutrientProfile { food.nutrients(for: portion) }
 

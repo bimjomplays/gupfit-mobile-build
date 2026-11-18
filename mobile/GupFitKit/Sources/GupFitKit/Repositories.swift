@@ -1,7 +1,7 @@
 import Foundation
 
 // Storage behind the screens and the AI chat's tool calls. Both use the same repository, so a meal the chat logs is
-// the same row the Today tab shows. The phone's SQLite store implements these (a later thread); InMemoryStore below
+// the same row the Today tab shows. The phone's SQLiteStore (SQLiteStore.swift) implements these; InMemoryStore below
 // is for tests and previews. Calls are synchronous: the store is local, and a tool call's change and its receipt must
 // commit together, which is simpler without suspension points in between.
 //
@@ -27,6 +27,8 @@ protocol MealLogRepository: AnyObject {
     func entries(in days: ClosedRange<LocalDay>) throws -> [MealEntry]
     func saveEntry(_ entry: MealEntry) throws
     func deleteEntry(id: MealEntryID) throws
+    /// the foods logged most recently, newest first, once each (as last logged)
+    func recentFoods(limit: Int) throws -> [FoodSnapshot]
 }
 
 extension MealLogRepository {
@@ -55,17 +57,51 @@ protocol RecipeRepository: AnyObject {
     func deleteRecipe(id: RecipeID) throws
 }
 
-/// All four together: what the app and the AI chat's tool calls work against.
-typealias GupFitStore = FoodRepository & MealLogRepository & WorkoutRepository & RecipeRepository
+/// Small app settings (the daily goals), each a Codable value under a key.
+protocol SettingsRepository: AnyObject {
+    func setting<T: Decodable>(_ key: SettingKey, as type: T.Type) throws -> T?
+    func saveSetting<T: Encodable>(_ key: SettingKey, _ value: T) throws
+}
+
+struct SettingKey: RawRepresentable, Hashable, Sendable {
+    let rawValue: String
+    init(rawValue: String) { self.rawValue = rawValue }
+
+    /// NutritionGoals
+    static let nutritionGoals = SettingKey(rawValue: "nutritionGoals")
+}
+
+extension SettingsRepository {
+    /// the saved daily goals, else `fallback`
+    func goals(or fallback: NutritionGoals) throws -> NutritionGoals {
+        try setting(.nutritionGoals, as: NutritionGoals.self) ?? fallback
+    }
+
+    func saveGoals(_ goals: NutritionGoals) throws {
+        try goals.validate()
+        try saveSetting(.nutritionGoals, goals)
+    }
+}
+
+/// Several changes that must happen together (a recipe and the food it replaces; later the AI chat's change and its
+/// receipt): either all of `body`'s saves and deletes stay, or, when it throws, none of them do.
+protocol TransactionalStore: AnyObject {
+    func transaction<T>(_ body: () throws -> T) throws -> T
+}
+
+/// Everything together: what the app and the AI chat's tool calls work against.
+typealias GupFitStore = FoodRepository & MealLogRepository & WorkoutRepository & RecipeRepository & SettingsRepository
+    & TransactionalStore
 
 /// Everything in memory, for tests and SwiftUI previews. Thread-safe.
 final class InMemoryStore: GupFitStore, @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private var foods: [FoodID: Food] = [:]
     private var mealEntries: [MealEntryID: MealEntry] = [:]
     private var exerciseLibrary: [ExerciseID: Exercise] = [:]
     private var workoutSessions: [WorkoutSessionID: WorkoutSession] = [:]
     private var recipes: [RecipeID: Recipe] = [:]
+    private var settings: [String: Data] = [:]
 
     init() {}
 
@@ -73,6 +109,33 @@ final class InMemoryStore: GupFitStore, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return try body()
+    }
+
+    // MARK: transactions
+
+    /// Holds the lock for the whole body (other threads wait) and puts everything back if it throws.
+    func transaction<T>(_ body: () throws -> T) throws -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        let saved = (foods, mealEntries, exerciseLibrary, workoutSessions, recipes, settings)
+        do {
+            return try body()
+        } catch {
+            (foods, mealEntries, exerciseLibrary, workoutSessions, recipes, settings) = saved
+            throw error
+        }
+    }
+
+    // MARK: settings
+
+    func setting<T: Decodable>(_ key: SettingKey, as type: T.Type) throws -> T? {
+        guard let data = locked({ settings[key.rawValue] }) else { return nil }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    func saveSetting<T: Encodable>(_ key: SettingKey, _ value: T) throws {
+        let data = try JSONEncoder().encode(value)
+        locked { settings[key.rawValue] = data }
     }
 
     private static func remove<K: Hashable & CustomStringConvertible, V>(_ id: K, from dict: inout [K: V]) throws {
@@ -115,6 +178,14 @@ final class InMemoryStore: GupFitStore, @unchecked Sendable {
     }
 
     func deleteEntry(id: MealEntryID) throws { try locked { try Self.remove(id, from: &mealEntries) } }
+
+    func recentFoods(limit: Int) -> [FoodSnapshot] {
+        locked {
+            var seen: Set<FoodID> = []
+            return Array(mealEntries.values.sorted { ($0.loggedAt, $1.food.foodID) > ($1.loggedAt, $0.food.foodID) }
+                .filter { seen.insert($0.food.foodID).inserted }.map(\.food).prefix(max(0, limit)))
+        }
+    }
 
     // MARK: workouts
 

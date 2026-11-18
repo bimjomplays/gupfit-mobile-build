@@ -22,6 +22,9 @@ targets:
       # on Linux; the app compiles its files directly (mobile/GupFitKit/Package.swift says why)
       - ../GupFitKit/Sources/GupFitKit
       - Resources
+      # the USDA food catalog (tools/catalog builds it), opened read-only from the app bundle
+      - path: ../../data/catalog.sqlite
+        buildPhase: resources
     info:
       path: Sources/Info.plist
       properties:

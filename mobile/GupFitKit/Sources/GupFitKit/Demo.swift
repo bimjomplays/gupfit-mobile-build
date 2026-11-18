@@ -17,8 +17,9 @@ enum AppTab: String, CaseIterable, Hashable, Sendable {
     }
 }
 
-/// Invented demo data for previews, the simulator and screenshot tests until the real store lands. Nothing here is
-/// anyone's real log; the numbers are round so a screenshot is easy to check by eye.
+/// Invented demo data for previews, tests and the simulator's screenshot runs (the app shows it only when launched
+/// with -demo-data, never on a real phone's store). Nothing here is anyone's real log; the numbers are round so a
+/// screenshot is easy to check by eye.
 enum Demo {
     static let oats = Food(id: "demo-oats", name: "Rolled oats", nutrients: NutrientProfile([
         .energy: 380, .protein: 13, .carbohydrate: 67, .fat: 7, .fiber: 10, .sugars: 1, .sodium: 5,
@@ -45,6 +46,12 @@ enum Demo {
     /// a store holding the demo foods, a logged `day` (breakfast and lunch), one workout and one recipe
     static func store(day: LocalDay, calendar: Calendar = .current) -> InMemoryStore {
         let store = InMemoryStore()
+        seed(store, day: day, calendar: calendar)
+        return store
+    }
+
+    /// puts the demo data into `store` (the simulator's screenshot runs seed a fresh SQLite store this way)
+    static func seed(_ store: any GupFitStore, day: LocalDay, calendar: Calendar = .current) {
         let start = day.start(in: calendar)
         func at(_ hour: Double) -> Date { start.addingTimeInterval(hour * 3600) }
         do {
@@ -67,15 +74,22 @@ enum Demo {
                     WorkoutSet(reps: 5, weightKg: 100), WorkoutSet(reps: 5, weightKg: 100), WorkoutSet(reps: 5, weightKg: 100),
                 ]),
             ]))
+            try store.saveSession(WorkoutSession(id: "demo-w0", title: "Push", startedAt: at(18 - 48), endedAt: at(19 - 48),
+                                                 exercises: [
+                SessionExercise(exercise: bench, sets: [
+                    WorkoutSet(reps: 8, weightKg: 60), WorkoutSet(reps: 8, weightKg: 60), WorkoutSet(reps: 6, weightKg: 65),
+                ]),
+                SessionExercise(exercise: run, sets: [WorkoutSet(duration: 900, distanceMeters: 2500)]),
+            ]))
             try store.saveRecipe(Recipe(id: "demo-r1", name: "Chicken rice bowl", servings: 4, ingredients: [
                 RecipeIngredient(food: chicken, portion: try chicken.portion(600, .gram)),
                 RecipeIngredient(food: rice, portion: try rice.portion(4, serving: "1 cup")),
             ], steps: ["Cook the rice.", "Grill the chicken and slice it.", "Split into four bowls."],
                                         tags: ["meal prep"]))
+            try store.saveGoals(goals)
         } catch {
             preconditionFailure("demo data is invalid: \(error)")
         }
-        return store
     }
 
     static let goals = NutritionGoals(energy: 2200, protein: 160, carbohydrate: 220, fat: 70)
