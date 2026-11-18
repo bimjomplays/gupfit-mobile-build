@@ -257,6 +257,8 @@ struct ChatScreen: View {
                 .padding(16)
             }
             .scrollDismissesKeyboard(.interactively)
+            // a tap on the conversation puts the keyboard away too (and gives the tab bar back)
+            .simultaneousGesture(TapGesture().onEnded { typing = false })
             .onChange(of: c.messages.last?.text) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             .onChange(of: c.messages.last?.cards.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             .onChange(of: c.id) { _, _ in proxy.scrollTo("end", anchor: .bottom) }

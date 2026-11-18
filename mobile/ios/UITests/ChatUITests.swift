@@ -97,12 +97,11 @@ final class ChatUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Egg, large"].waitForExistence(timeout: 2), "Undo took it back")
     }
 
-    /// The chat dismisses the keyboard interactively: drag from the messages down through it.
+    /// A tap on the conversation puts the keyboard away.
     private func hideKeyboard(_ app: XCUIApplication) {
-        for _ in 0..<3 where app.keyboards.firstMatch.exists {
-            let from = app.scrollViews.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
-            from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.99)))
-            _ = app.keyboards.firstMatch.waitForNonExistence(timeout: 2)
+        for _ in 0..<2 where app.keyboards.firstMatch.exists {
+            app.staticTexts.matching(identifier: "userMessage").firstMatch.tap()
+            _ = app.keyboards.firstMatch.waitForNonExistence(timeout: 3)
         }
         XCTAssertFalse(app.keyboards.firstMatch.exists, "the keyboard went away")
     }
