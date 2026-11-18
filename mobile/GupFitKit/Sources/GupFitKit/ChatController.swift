@@ -1,0 +1,353 @@
+import Foundation
+
+/// What the Chat tab shows.
+struct ChatState: Equatable, Sendable {
+    /// the paired PC (nil: show the pairing screen)
+    var pc: PairedPC?
+    /// the PC's picker; empty until it answered
+    var models: [ModelChoice] = []
+    /// why the picker couldn't be loaded
+    var modelsProblem: String?
+    var pick: ModelPick?
+    /// every chat, newest first; empty chats only while open
+    var conversations: [Conversation] = []
+    var openID: String
+    /// the turn id of the reply coming now
+    var running: String?
+    var stopping = false
+    /// a problem to show once (pairing failed, nothing to send with)
+    var problem: String?
+    var pairingBusy = false
+
+    var current: Conversation {
+        conversations.first { $0.id == openID } ?? Conversation(id: openID, created: Date(timeIntervalSince1970: 0))
+    }
+
+    var pickedModel: ModelChoice? { models.first { $0.id == pick?.model } }
+
+    /// the chats worth listing: the ones with messages
+    var listed: [Conversation] { conversations.filter { !$0.messages.isEmpty } }
+}
+
+/// The paired PC as the UI shows it (no token).
+struct PairedPC: Equatable, Sendable {
+    var name: String
+    var host: String
+    var pairedAt: Date
+
+    init(_ p: PCPairing) {
+        name = p.pcName
+        host = p.shortHost
+        pairedAt = p.pairedAt
+    }
+}
+
+/// The Chat tab's logic: pairing, the model picker, sending a turn and streaming its reply into the open chat,
+/// reconnecting after a dropped connection, stopping, and keeping the history on the phone. The app's ChatModel
+/// mirrors `state` for SwiftUI; tests drive it with a fake transport on Linux.
+@MainActor
+final class ChatController {
+    private(set) var state: ChatState {
+        didSet { if state != oldValue { onChange?() } }
+    }
+    var onChange: (() -> Void)?
+
+    let client: PCClient
+    let pairings: any PairingStore
+    let history: any ChatHistoryStore
+    let deviceName: String
+    var now: @Sendable () -> Date
+    /// tries after a dropped connection before the reply counts as failed
+    var reconnects = 3
+    var reconnectDelay: Duration = .seconds(1)
+    /// how often a streaming reply is saved (so a closed app keeps most of it)
+    var saveEvery: TimeInterval = 2
+    /// how long Stop waits for the PC before it gives up on the reply locally
+    var stopGrace: Duration = .seconds(5)
+
+    private var pairing: PCPairing?
+    private var turnTask: Task<Void, Never>?
+    private var lastSave = Date.distantPast
+
+    init(client: PCClient, pairings: any PairingStore, history: any ChatHistoryStore, deviceName: String,
+         now: @escaping @Sendable () -> Date = { Date() }) {
+        self.client = client
+        self.pairings = pairings
+        self.history = history
+        self.deviceName = deviceName
+        self.now = now
+        let p = pairings.load()
+        pairing = p
+        let prefs = history.loadPrefs()
+        var all = history.conversations()
+        let open: String
+        if let id = prefs.open, all.contains(where: { $0.id == id }) {
+            open = id
+        } else {
+            let fresh = Conversation(created: now())
+            all.insert(fresh, at: 0)
+            open = fresh.id
+        }
+        state = ChatState(pc: p.map(PairedPC.init), pick: prefs.pick, conversations: all, openID: open)
+    }
+
+    var isPaired: Bool { pairing != nil }
+
+    // MARK: - Pairing
+
+    /// Pairs with the PC in a scanned or pasted link. True when it worked; else `state.problem` says why.
+    @discardableResult
+    func pair(_ text: String) async -> Bool {
+        guard !state.pairingBusy else { return false }
+        let link: PairLink
+        switch PairLink.parse(text) {
+        case .failure(let p):
+            state.problem = p.message
+            return false
+        case .success(let l):
+            link = l
+        }
+        state.pairingBusy = true
+        defer { state.pairingBusy = false }
+        do {
+            let p = try await client.pair(link, device: deviceName, now: now())
+            guard pairings.save(p) else {
+                state.problem = "The pairing couldn't be kept in the Keychain. Try again."
+                return false
+            }
+            pairing = p
+            state.pc = PairedPC(p)
+            state.problem = nil
+            await refreshModels()
+            return true
+        } catch {
+            state.problem = PCError.from(error).message
+            return false
+        }
+    }
+
+    /// Ends this phone's token on the PC (when it can be reached) and forgets the pairing here either way.
+    func unpair() async {
+        if let p = pairing { try? await client.unpair(p) }
+        forgetPairing()
+    }
+
+    private func forgetPairing() {
+        pairings.clear()
+        pairing = nil
+        state.pc = nil
+        state.models = []
+        state.modelsProblem = nil
+    }
+
+    // MARK: - Models
+
+    func refreshModels() async {
+        guard let p = pairing else { return }
+        do {
+            let reply = try await client.models(p)
+            state.models = reply.models
+            state.modelsProblem = reply.models.isEmpty ? "Your PC has no Claude or GPT models in its picker." : nil
+            state.pick = reply.pick(keeping: state.current.pick ?? state.pick)
+        } catch {
+            let e = PCError.from(error)
+            if e == .notPaired { forgetPairing() }
+            if !e.isCancelled { state.modelsProblem = e.message }
+        }
+    }
+
+    /// The picker's choice: for this chat and as the default for new ones.
+    func choose(_ pick: ModelPick) {
+        state.pick = pick
+        if let i = index(of: state.openID) { state.conversations[i].pick = pick }
+        savePrefs()
+    }
+
+    // MARK: - Chats
+
+    func newChat() {
+        if state.current.messages.isEmpty { return }
+        let fresh = Conversation(created: now(), pick: state.pick)
+        state.conversations.insert(fresh, at: 0)
+        open(fresh.id)
+    }
+
+    func open(_ id: String) {
+        guard index(of: id) != nil else { return }
+        state.conversations.removeAll { $0.messages.isEmpty && $0.id != id }
+        state.openID = id
+        if let p = state.current.pick, state.models.isEmpty || state.models.contains(where: { $0.id == p.model }) {
+            state.pick = p
+        }
+        savePrefs()
+    }
+
+    func delete(_ id: String) {
+        guard id != runningChat else { return }
+        try? history.delete(id: id)
+        state.conversations.removeAll { $0.id == id }
+        if state.openID == id {
+            let fresh = Conversation(created: now(), pick: state.pick)
+            state.conversations.insert(fresh, at: 0)
+            state.openID = fresh.id
+        }
+        savePrefs()
+    }
+
+    func clearProblem() { state.problem = nil }
+
+    // MARK: - Turns
+
+    private var runningChat: String?
+
+    /// Sends `text` in the open chat and streams the reply. False (with `state.problem`) when it can't be sent.
+    @discardableResult
+    func send(_ text: String) -> Bool {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return false }
+        guard state.running == nil else {
+            state.problem = "Wait for the reply, or stop it."
+            return false
+        }
+        guard let p = pairing else {
+            state.problem = "Pair with your PC first."
+            return false
+        }
+        guard let pick = state.pick else {
+            state.problem = state.modelsProblem ?? "Pick a model first."
+            return false
+        }
+        guard words.count <= TurnLimits.messageChars else {
+            state.problem = "That message is too long (up to \(TurnLimits.messageChars) characters)."
+            return false
+        }
+        guard let i = index(of: state.openID) else { return false }
+        let t = now()
+        let turn = UUID().uuidString.lowercased()
+        state.conversations[i].messages.append(ChatMessage(role: .user, text: words, at: t))
+        let request = TurnRequest(turn: turn, chat: state.openID, model: pick.model, effort: pick.effort,
+                                  messages: state.conversations[i].messagesToSend())
+        let reply = ChatMessage(role: .assistant, text: "", at: t, state: .streaming, model: pick.model, turn: turn)
+        state.conversations[i].messages.append(reply)
+        state.conversations[i].pick = pick
+        state.conversations[i].updated = t
+        moveToTop(i)
+        state.running = turn
+        state.problem = nil
+        runningChat = state.openID
+        save(state.openID)
+        let chat = state.openID
+        turnTask = Task { [weak self] in
+            await self?.run(p, request, chat: chat, reply: reply.id)
+        }
+        return true
+    }
+
+    /// Asks the PC to stop the reply; if the PC doesn't answer soon, the reply stops here anyway.
+    func stop() async {
+        guard let turn = state.running, let p = pairing, !state.stopping else { return }
+        state.stopping = true
+        try? await client.cancel(p, turn: turn)
+        try? await Task.sleep(for: stopGrace)
+        if state.running == turn {
+            turnTask?.cancel()
+        }
+    }
+
+    /// Waits for the reply coming now (tests).
+    func waitForReply() async {
+        await turnTask?.value
+    }
+
+    private func run(_ p: PCPairing, _ request: TurnRequest, chat: String, reply: String) async {
+        var lastID = 0
+        var tries = 0
+        while true {
+            do {
+                for try await (id, event) in client.turn(p, request, after: lastID) {
+                    if let id { lastID = id }
+                    apply(event, chat: chat, reply: reply)
+                    if event.isLast { return finish(chat) }
+                }
+                return finish(chat)
+            } catch {
+                let e = PCError.from(error)
+                if Task.isCancelled || e.isCancelled {
+                    update(chat, reply) { m in m.state = .cancelled }
+                    return finish(chat)
+                }
+                // a dropped or unanswered connection: the same turn id again continues it (the PC never runs it twice)
+                if case .unreachable = e, tries < reconnects {
+                    tries += 1
+                    try? await Task.sleep(for: reconnectDelay * tries)
+                    if !Task.isCancelled { continue }
+                }
+                if e == .notPaired { forgetPairing() }
+                update(chat, reply) { m in m.state = .failed(e.message) }
+                return finish(chat)
+            }
+        }
+    }
+
+    private func apply(_ event: TurnEvent, chat: String, reply: String) {
+        switch event {
+        case .started, .other:
+            break
+        case .delta(let text):
+            update(chat, reply) { m in m.text += text }
+            if now().timeIntervalSince(lastSave) >= saveEvery { save(chat) }
+        case .done(let text, let stop):
+            update(chat, reply) { m in
+                if !text.isEmpty || stop == "end" { m.text = text }
+                m.state = stop == "cancelled" ? .cancelled : .complete
+            }
+        case .failed(_, let message, let text):
+            update(chat, reply) { m in
+                if !text.isEmpty { m.text = text }
+                m.state = .failed(message)
+            }
+        }
+    }
+
+    private func finish(_ chat: String) {
+        update(chat, nil) { _ in }
+        state.running = nil
+        state.stopping = false
+        runningChat = nil
+        save(chat)
+    }
+
+    // MARK: - Helpers
+
+    private func index(of id: String) -> Int? { state.conversations.firstIndex { $0.id == id } }
+
+    private func moveToTop(_ i: Int) {
+        guard i != 0 else { return }
+        let c = state.conversations.remove(at: i)
+        state.conversations.insert(c, at: 0)
+    }
+
+    /// changes one message (`reply`) of chat `chat`; nil changes none but still marks the chat updated
+    private func update(_ chat: String, _ reply: String?, _ change: (inout ChatMessage) -> Void) {
+        guard let i = index(of: chat) else { return }
+        if let reply, let j = state.conversations[i].messages.firstIndex(where: { $0.id == reply }) {
+            change(&state.conversations[i].messages[j])
+        }
+        state.conversations[i].updated = max(state.conversations[i].updated, now())
+    }
+
+    private func save(_ chat: String) {
+        guard let i = index(of: chat), !state.conversations[i].messages.isEmpty else { return }
+        lastSave = now()
+        do {
+            try history.save(state.conversations[i])
+        } catch {
+            state.problem = "This chat couldn't be saved on the phone."
+        }
+        savePrefs()
+    }
+
+    private func savePrefs() {
+        try? history.savePrefs(ChatPrefs(pick: state.pick, open: state.openID))
+    }
+}
