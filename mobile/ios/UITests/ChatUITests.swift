@@ -24,7 +24,7 @@ final class ChatUITests: XCTestCase {
         XCTAssertTrue(ask.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "desk.example.ts.net:10009"))
             .firstMatch.exists)
         shot(app, "chat-pair-confirm")
-        ask.buttons["Pair"].tap()
+        ask.buttons["pairConfirm"].firstMatch.tap()  // iOS 26 nests the alert button in a second one
 
         let menu = app.buttons["modelMenu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10), "paired: the chat with its model picker")
