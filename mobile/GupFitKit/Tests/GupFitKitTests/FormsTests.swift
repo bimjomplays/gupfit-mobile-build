@@ -83,7 +83,7 @@ final class FormsTests: XCTestCase {
         XCTAssertNotEqual(next.id, set.id)
         XCTAssertEqual(next.reps, 5)
         XCTAssertFalse(next.isWarmup)
-        XCTAssertFalse(next.isCompleted)
+        XCTAssertTrue(next.isCompleted)
 
         let grams = Portion(150, .standard(.gram))
         assertClose(grams.converted(to: Serving("1 cup", amount: 120)).count, 1.25)

@@ -124,7 +124,7 @@ struct WorkoutEditor: View {
                         }
                         .onDelete { exercise.sets.remove(atOffsets: $0) }
                         Button {
-                            exercise.sets.append(exercise.sets.last?.next() ?? WorkoutSet(isCompleted: false))
+                            exercise.sets.append(exercise.sets.last?.next() ?? WorkoutSet())
                         } label: {
                             Label("Add set", systemImage: "plus")
                         }
@@ -179,7 +179,7 @@ struct WorkoutEditor: View {
             }
             .sheet(isPresented: $pickingExercise) {
                 ExercisePicker { exercise in
-                    session.exercises.append(SessionExercise(exercise: exercise, sets: [WorkoutSet(isCompleted: false)]))
+                    session.exercises.append(SessionExercise(exercise: exercise, sets: [WorkoutSet()]))
                 }
             }
         }

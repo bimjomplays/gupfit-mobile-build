@@ -140,10 +140,11 @@ extension MealSlot {
 }
 
 extension WorkoutSet {
-    /// the next set to do: the same numbers, a new id, not done yet
+    /// the next set: the same numbers, a new id, a working set counted as done (most sets are logged after doing
+    /// them; untick one that wasn't)
     func next() -> WorkoutSet {
         WorkoutSet(reps: reps, weightKg: weightKg, duration: duration, distanceMeters: distanceMeters, isWarmup: false,
-                   isCompleted: false)
+                   isCompleted: true)
     }
 }
 
