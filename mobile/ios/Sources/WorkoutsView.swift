@@ -249,6 +249,7 @@ struct ExercisePicker: View {
                         LabeledContent(e.name, value: e.kind.rawValue.capitalized)
                     }
                     .foregroundStyle(.primary)
+                    .accessibilityIdentifier("pick-exercise-\(e.name)")
                 }
                 if !name.isEmpty && !matches.contains(where: { $0.name.lowercased() == name.lowercased() }) {
                     Section("New exercise") {

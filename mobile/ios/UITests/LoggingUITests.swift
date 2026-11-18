@@ -45,7 +45,7 @@ final class LoggingUITests: XCTestCase {
         let title = app.textFields["workout-title"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         app.buttons["add-exercise"].tap()
-        let squat = app.staticTexts["Back squat"]
+        let squat = app.buttons["pick-exercise-Back squat"]
         XCTAssertTrue(squat.waitForExistence(timeout: 5))
         squat.tap()
 
@@ -75,12 +75,13 @@ final class LoggingUITests: XCTestCase {
         name.typeText("Oat bowl")
 
         app.buttons["add-ingredient"].tap()
-        let oats = app.staticTexts["Rolled oats"]
+        // listed under Recent and My foods: either is the same food
+        let oats = app.staticTexts["Rolled oats"].firstMatch
         XCTAssertTrue(oats.waitForExistence(timeout: 5), "my foods are listed")
         oats.tap()
         XCTAssertTrue(app.buttons["portion-confirm"].waitForExistence(timeout: 5))
         app.buttons["portion-confirm"].tap()
-        XCTAssertTrue(app.staticTexts["Rolled oats"].waitForExistence(timeout: 5), "added as an ingredient")
+        XCTAssertTrue(app.staticTexts["Rolled oats"].firstMatch.waitForExistence(timeout: 5), "added as an ingredient")
         attachShot(app, named: "recipe-editor")
         app.buttons["recipe-save"].tap()
 
@@ -93,6 +94,6 @@ final class LoggingUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Logged to today"].waitForExistence(timeout: 5))
 
         app.tabBars.buttons["Today"].tap()
-        XCTAssertTrue(app.staticTexts["Oat bowl"].waitForExistence(timeout: 5), "the serving is on today")
+        XCTAssertTrue(app.staticTexts["Oat bowl"].firstMatch.waitForExistence(timeout: 5), "the serving is on today")
     }
 }
