@@ -19,6 +19,12 @@ final class ChatUITests: XCTestCase {
         field.tap()
         field.typeText(Self.link)
         app.buttons["pairButton"].tap()
+        let ask = app.alerts["Pair with this PC?"]
+        XCTAssertTrue(ask.waitForExistence(timeout: 5), "pairing asks first, with the full address")
+        XCTAssertTrue(ask.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "desk.example.ts.net:10009"))
+            .firstMatch.exists)
+        shot(app, "chat-pair-confirm")
+        ask.buttons["Pair"].tap()
 
         let menu = app.buttons["modelMenu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10), "paired: the chat with its model picker")
@@ -30,7 +36,7 @@ final class ChatUITests: XCTestCase {
         app.buttons["Medium"].tap()
         XCTAssertTrue(menu.label.contains("GPT 6.1 Terra"), menu.label)
 
-        let input = app.textFields["chatInput"]
+        let input = app.textViews["chatInput"].exists ? app.textViews["chatInput"] : app.textFields["chatInput"]
         input.tap()
         input.typeText("How much protein is in chicken?")
         app.buttons["chatSend"].tap()

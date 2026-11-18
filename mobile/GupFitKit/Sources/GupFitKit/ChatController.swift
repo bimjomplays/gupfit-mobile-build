@@ -18,6 +18,8 @@ struct ChatState: Equatable, Sendable {
     /// a problem to show once (pairing failed, nothing to send with)
     var problem: String?
     var pairingBusy = false
+    /// a scanned, pasted or opened pairing link waiting for the user's OK (a link can come from anywhere)
+    var pendingPair: PendingPair?
 
     var current: Conversation {
         conversations.first { $0.id == openID } ?? Conversation(id: openID, created: Date(timeIntervalSince1970: 0))
@@ -32,14 +34,25 @@ struct ChatState: Equatable, Sendable {
 /// The paired PC as the UI shows it (no token).
 struct PairedPC: Equatable, Sendable {
     var name: String
+    /// the full address, `<pc>.<tailnet>.ts.net:port`
     var host: String
     var pairedAt: Date
 
     init(_ p: PCPairing) {
         name = p.pcName
-        host = p.shortHost
+        host = p.address
         pairedAt = p.pairedAt
     }
+}
+
+/// A pairing link the user still has to OK: the app shows the PC's full address first, since a link from a web page,
+/// message or someone else's QR code could point at another person's machine.
+struct PendingPair: Equatable, Sendable {
+    var link: PairLink
+    /// `<pc>.<tailnet>.ts.net:port`
+    var address: String { link.address }
+    /// this phone paired with a PC on another tailnet before: likely not your PC
+    var otherTailnet: Bool
 }
 
 /// The Chat tab's logic: pairing, the model picker, sending a turn and streaming its reply into the open chat,
@@ -95,18 +108,48 @@ final class ChatController {
 
     // MARK: - Pairing
 
-    /// Pairs with the PC in a scanned or pasted link. True when it worked; else `state.problem` says why.
+    /// A scanned, pasted or opened link: checks it and asks for the user's OK (`state.pendingPair`) before anything is
+    /// sent. False (with `state.problem`) when it isn't a usable pairing link.
     @discardableResult
-    func pair(_ text: String) async -> Bool {
+    func propose(_ text: String) -> Bool {
         guard !state.pairingBusy else { return false }
-        let link: PairLink
         switch PairLink.parse(text) {
         case .failure(let p):
             state.problem = p.message
             return false
-        case .success(let l):
-            link = l
+        case .success(let link):
+            let last = history.loadPrefs().tailnet
+            state.problem = nil
+            state.pendingPair = PendingPair(link: link, otherTailnet: last != nil && last != link.tailnet)
+            return true
         }
+    }
+
+    /// The user OK'd the pending link: pairs with that PC.
+    @discardableResult
+    func confirmPair() async -> Bool {
+        guard let pending = state.pendingPair else { return false }
+        state.pendingPair = nil
+        return await pair(pending.link)
+    }
+
+    func cancelPair() { state.pendingPair = nil }
+
+    /// Pairs with the PC in a link the user already OK'd (tests and confirmPair). True when it worked; else
+    /// `state.problem` says why.
+    @discardableResult
+    func pair(_ text: String) async -> Bool {
+        switch PairLink.parse(text) {
+        case .failure(let p):
+            state.problem = p.message
+            return false
+        case .success(let link):
+            return await pair(link)
+        }
+    }
+
+    private func pair(_ link: PairLink) async -> Bool {
+        guard !state.pairingBusy else { return false }
         state.pairingBusy = true
         defer { state.pairingBusy = false }
         do {
@@ -118,6 +161,7 @@ final class ChatController {
             pairing = p
             state.pc = PairedPC(p)
             state.problem = nil
+            savePrefs(tailnet: link.tailnet)
             await refreshModels()
             return true
         } catch {
@@ -347,7 +391,8 @@ final class ChatController {
         savePrefs()
     }
 
-    private func savePrefs() {
-        try? history.savePrefs(ChatPrefs(pick: state.pick, open: state.openID))
+    private func savePrefs(tailnet: String? = nil) {
+        let keep = tailnet ?? history.loadPrefs().tailnet
+        try? history.savePrefs(ChatPrefs(pick: state.pick, open: state.openID, tailnet: keep))
     }
 }

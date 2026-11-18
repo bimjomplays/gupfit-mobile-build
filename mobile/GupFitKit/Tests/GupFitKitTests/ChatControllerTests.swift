@@ -142,6 +142,49 @@ final class ChatControllerTests: XCTestCase {
         XCTAssertEqual(body, ["code": String(repeating: "c", count: 43), "device": "Test iPhone"])
     }
 
+    func testALinkAsksFirstWithTheFullAddress() async throws {
+        let c = controller()
+        XCTAssertTrue(c.propose(link))
+        let pending = try XCTUnwrap(c.state.pendingPair)
+        XCTAssertEqual(pending.address, "desktop.example.ts.net:10009")
+        XCTAssertFalse(pending.otherTailnet)
+        XCTAssertTrue(pc.requests.isEmpty, "nothing is sent before the OK")
+        c.cancelPair()
+        XCTAssertNil(c.state.pendingPair)
+        let none = await c.confirmPair()
+        XCTAssertFalse(none)
+        XCTAssertTrue(pc.requests.isEmpty)
+
+        XCTAssertTrue(c.propose(link))
+        let ok = await c.confirmPair()
+        XCTAssertTrue(ok)
+        XCTAssertNil(c.state.pendingPair)
+        XCTAssertEqual(c.state.pc?.host, "desktop.example.ts.net:10009")
+        XCTAssertEqual(history.loadPrefs().tailnet, "example.ts.net")
+    }
+
+    func testALinkFromAnotherTailnetIsFlagged() async throws {
+        let c = await paired()
+        c.choose(ModelPick(model: "gpt-6.1-terra", effort: "low"))  // saving prefs keeps the tailnet
+        XCTAssertEqual(history.loadPrefs().tailnet, "example.ts.net")
+        await c.unpair()
+        let other = "gupfit://pair?v=1&url=https%3A%2F%2Fevil.desktop.ts.net%3A10009&code="
+            + String(repeating: "e", count: 43)
+        XCTAssertTrue(c.propose(other))
+        XCTAssertEqual(c.state.pendingPair?.otherTailnet, true)
+        XCTAssertEqual(c.state.pendingPair?.address, "evil.desktop.ts.net:10009")
+        c.cancelPair()
+        XCTAssertTrue(c.propose(link))
+        XCTAssertEqual(c.state.pendingPair?.otherTailnet, false)
+    }
+
+    func testABadLinkIsRefusedBeforeAsking() {
+        let c = controller()
+        XCTAssertFalse(c.propose("gupfit://pair?v=1&url=https%3A%2F%2Fevil.example.com&code=" + String(repeating: "c", count: 43)))
+        XCTAssertNil(c.state.pendingPair)
+        XCTAssertEqual(c.state.problem, PairLink.Problem.badAddress.message)
+    }
+
     func testBadLinksAndCodesSayWhy() async {
         let c = controller()
         var ok = await c.pair("hello")

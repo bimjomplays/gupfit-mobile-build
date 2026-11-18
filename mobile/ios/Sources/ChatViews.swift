@@ -14,7 +14,6 @@ struct ChatTab: View {
         }
         .navigationTitle("Chat")
         .navigationBarTitleDisplayMode(.inline)
-        .accessibilityIdentifier("screen-chat")
         .environment(chat)
     }
 }
@@ -104,6 +103,26 @@ struct PairPCView: View {
         .scrollDismissesKeyboard(.interactively)
         .onAppear { takeIncoming() }
         .onChange(of: chat.incomingLink) { _, _ in takeIncoming() }
+        .alert("Pair with this PC?", isPresented: confirming, presenting: chat.state.pendingPair) { _ in
+            Button("Pair") { Task { _ = await chat.confirmPair() } }
+                .accessibilityIdentifier("pairConfirm")
+            Button("Cancel", role: .cancel) { chat.cancelPair() }
+        } message: { pending in
+            Text(confirmText(pending))
+        }
+    }
+
+    /// The full address, since a link can come from anywhere (a web page, a message, someone else's QR code).
+    private func confirmText(_ pending: PendingPair) -> String {
+        var text = "Your chats will go to \(pending.address). Pair only if that is your own PC."
+        if pending.otherTailnet {
+            text += "\n\nWarning: this PC is on a different Tailscale network than the PC you paired with before."
+        }
+        return text
+    }
+
+    private var confirming: Binding<Bool> {
+        Binding(get: { chat.state.pendingPair != nil }, set: { if !$0 { chat.cancelPair() } })
     }
 
     @ViewBuilder
@@ -151,10 +170,11 @@ struct PairPCView: View {
         tryCode(link)
     }
 
+    /// Checks the link and asks before pairing (the alert above).
     private func tryCode(_ text: String) {
-        guard !chat.state.pairingBusy else { return }
+        guard !chat.state.pairingBusy, chat.state.pendingPair == nil else { return }
         lastTried = text
-        Task { _ = await chat.pair(text) }
+        chat.propose(text)
     }
 }
 
@@ -197,7 +217,7 @@ struct ChatScreen: View {
                     Button { chat.newChat() } label: { Label("New chat", systemImage: "square.and.pencil") }
                         .disabled(state.current.messages.isEmpty)
                     if let pc = state.pc {
-                        Section("Paired with \(pc.name)") {
+                        Section("Paired with \(pc.name) (\(pc.host))") {
                             Button(role: .destructive) { confirmUnpair = true } label: {
                                 Label("Unpair this phone", systemImage: "link.badge.minus")
                             }

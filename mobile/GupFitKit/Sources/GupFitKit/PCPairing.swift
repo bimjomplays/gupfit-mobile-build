@@ -9,8 +9,8 @@ struct PCPairing: Codable, Equatable, Sendable {
     var pcName: String
     var pairedAt: Date
 
-    /// The machine name only (the first label of the host), for the UI.
-    var shortHost: String { String((baseURL.host ?? "").split(separator: ".").first ?? "") }
+    /// The full address (host and port), for the UI: the machine name alone could be any tailnet's.
+    var address: String { PairLink.address(of: baseURL) }
 }
 
 /// Where the pairing lives: the Keychain in the app (KeychainPairingStore), memory in tests.
@@ -82,6 +82,17 @@ struct PairLink: Equatable, Sendable {
         out.host = host
         out.port = c.port
         return out.url
+    }
+
+    /// The full PC address the link points at, `<pc>.<tailnet>.ts.net[:port]`, to show before pairing.
+    var address: String { Self.address(of: baseURL) }
+
+    /// The tailnet part of the address, `<tailnet>.ts.net`: a link from another tailnet is someone else's PC.
+    var tailnet: String { (baseURL.host ?? "").split(separator: ".").dropFirst().joined(separator: ".") }
+
+    static func address(of url: URL) -> String {
+        let host = url.host ?? ""
+        return url.port.map { "\(host):\($0)" } ?? host
     }
 
     /// base64url without padding; the PC makes 43 characters (32 bytes)

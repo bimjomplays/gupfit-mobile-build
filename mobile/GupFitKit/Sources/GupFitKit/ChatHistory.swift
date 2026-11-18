@@ -100,6 +100,8 @@ protocol ChatHistoryStore: AnyObject, Sendable {
 struct ChatPrefs: Codable, Equatable, Sendable {
     var pick: ModelPick?
     var open: String?
+    /// the tailnet (`<tailnet>.ts.net`) of the last PC this phone paired with; a link from another one gets a warning
+    var tailnet: String?
 }
 
 /// One JSON file per chat under `folder` (chats/<id>.json) and chat-prefs.json; written atomically.
