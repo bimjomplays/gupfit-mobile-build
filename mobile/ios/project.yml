@@ -1,0 +1,100 @@
+# XcodeGen spec for the GupFit iPhone app. The .xcodeproj and Sources/Info.plist are generated on the macOS runner
+# (`xcodegen generate`) and never committed. This folder is published to the public build copy (bin/publish-mobile):
+# nothing personal or secret goes here (the signing team and keys come from the runner's secrets).
+name: GupFit
+options:
+  bundleIdPrefix: app.gupfit
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  GupFit:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      # the plain logic (models, calculations, validation, repositories): a Swift package that also builds and tests
+      # on Linux; the app compiles its files directly (mobile/GupFitKit/Package.swift says why)
+      - ../GupFitKit/Sources/GupFitKit
+      - Resources
+      # the USDA food catalog (tools/catalog builds it), opened read-only from the app bundle
+      - path: ../../data/catalog.sqlite
+        buildPhase: resources
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: GupFit
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIRequiredDeviceCapabilities: [arm64]
+        ITSAppUsesNonExemptEncryption: false
+        # the PC pairing QR holds a gupfit://pair link, so the iPhone camera app can open it here too
+        CFBundleURLTypes:
+          - CFBundleURLName: app.gupfit.phone.pair
+            CFBundleURLSchemes: [gupfit]
+        NSCameraUsageDescription: >-
+          GupFit uses the camera only to scan the pairing code your PC shows. Nothing is recorded or saved.
+    settings:
+      base:
+        # PLACEHOLDER bundle id: replace with the App ID registered in App Store Connect before the first TestFlight
+        PRODUCT_BUNDLE_IDENTIFIER: app.gupfit.phone
+        PRODUCT_NAME: GupFit
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_PREVIEWS: "YES"
+        # a placeholder icon (a white dumbbell on green) until GupFit has a real one
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # unsigned by default (the ipa job); the testflight job turns signing on with its own settings
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGN_IDENTITY: ""
+  GupFitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+      # GupFitKit's tests run here too, against the app's copy of the same files
+      - ../GupFitKit/Tests/GupFitKitTests
+    dependencies:
+      - target: GupFit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: app.gupfit.phone.tests
+        CODE_SIGNING_ALLOWED: "NO"
+  GupFitUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: GupFit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: app.gupfit.phone.uitests
+        TEST_TARGET_NAME: GupFit
+        CODE_SIGNING_ALLOWED: "NO"
+schemes:
+  GupFit:
+    build:
+      targets:
+        GupFit: all
+        GupFitTests: [test]
+        GupFitUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - GupFitTests
+        - GupFitUITests
+    archive:
+      config: Release
