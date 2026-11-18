@@ -29,6 +29,24 @@ final class SQLiteStoreTests: XCTestCase {
 
     private func open() throws -> SQLiteStore { try SQLiteStore(url: temp.database) }
 
+    /// A COMMIT that fails (here a deferred foreign key) rolls everything back and leaves the connection usable: the
+    /// next transaction commits for real instead of nesting inside a transaction that never ended.
+    func testAFailedCommitRollsBackAndTheNextWriteCommits() throws {
+        let db = try SQLiteDatabase(path: temp.database.path)
+        try Migrator.migrate(db, PhoneSchema.migrations, backupDirectory: nil)
+        try db.execute("PRAGMA foreign_keys = ON")
+        XCTAssertThrowsError(try db.transaction {
+            try db.execute("PRAGMA defer_foreign_keys = ON")
+            try db.run("INSERT INTO session_exercises (session_id, position, id, exercise_id, name, kind) VALUES ('nope', 0, 'x', 'x', 'X', 'strength')")
+        })
+        XCTAssertFalse(db.isInTransaction)
+        try db.transaction { try db.run("INSERT INTO settings (key, value) VALUES ('k', '1')") }
+        db.close()
+        let other = try SQLiteDatabase(path: temp.database.path)
+        XCTAssertEqual(try other.scalar("SELECT count(*) FROM settings"), .integer(1), "committed, visible to another connection")
+        XCTAssertEqual(try other.scalar("SELECT count(*) FROM session_exercises"), .integer(0))
+    }
+
     func testContract() throws {
         var n = 0
         try StoreContract.all {

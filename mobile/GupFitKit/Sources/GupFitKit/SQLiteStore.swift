@@ -434,10 +434,10 @@ final class SQLiteStore: GupFitStore, @unchecked Sendable {
         }
     }
 
-    func receipt(turn: String, fingerprint: String) throws -> ToolReceipt? {
+    func receipts(turn: String, fingerprint: String) throws -> [ToolReceipt] {
         try locked {
-            try db.query("SELECT * FROM tool_receipts WHERE turn = ? AND fingerprint = ? AND ok = 1 ORDER BY at LIMIT 1",
-                         [turn, fingerprint]).first.map(receipt(from:))
+            try db.query("SELECT * FROM tool_receipts WHERE turn = ? AND fingerprint = ? AND ok = 1",
+                         [turn, fingerprint]).map(receipt(from:))
         }
     }
 

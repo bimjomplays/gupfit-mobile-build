@@ -34,8 +34,8 @@ final class ToolRunner: @unchecked Sendable {
     // MARK: - Running a call
 
     func run(_ call: ToolCall, turn: String) -> ToolOutcome {
-        if let earlier = try? store.receipt(turn: turn, call: call.call) { return earlier.outcome }
         let fingerprint = Fingerprint.of(call.name + " " + call.arguments.canonicalText)
+        if let earlier = try? store.receipt(turn: turn, call: call.call) { return replay(earlier, of: call, fingerprint) }
         do {
             guard let name = ToolName(rawValue: call.name) else {
                 throw ToolError("There is no tool called \(call.name) in this version of GupFit.")
@@ -44,8 +44,9 @@ final class ToolRunner: @unchecked Sendable {
                 throw ToolError("This phone runs tool version \(ToolSet.version), not \(call.version).")
             }
             return try store.transaction {
-                if let earlier = try store.receipt(turn: turn, call: call.call) { return earlier.outcome }
-                if name.writes, let earlier = try store.receipt(turn: turn, fingerprint: fingerprint) {
+                if let earlier = try store.receipt(turn: turn, call: call.call) { return replay(earlier, of: call, fingerprint) }
+                if name.writes, let earlier = try store.receipts(turn: turn, fingerprint: fingerprint)
+                    .first(where: { try stillInPlace($0) }) {
                     // the model asked for the same change again in this reply: answer from the first, change nothing
                     var result = earlier.result?.object ?? [:]
                     result["note"] = "This exact change was already made earlier in this reply (no second copy was saved)."
@@ -61,12 +62,41 @@ final class ToolRunner: @unchecked Sendable {
                 return ToolOutcome(ok: true, result: result, changes: changes)
             }
         } catch {
-            // nothing of the call stayed (the transaction rolled back); keep the answer so a replay gets the same one
+            // nothing of the call stayed (the transaction rolled back); keep the answer so a replay gets the same one,
+            // but never over an existing receipt (its changes are what Undo needs)
             let message = Self.message(for: error)
-            try? store.saveReceipt(ToolReceipt(turn: turn, call: call.call, name: call.name, fingerprint: fingerprint,
-                                               ok: false, result: nil, error: message, changes: [], at: now()))
+            if case .some(.none) = try? store.receipt(turn: turn, call: call.call) {
+                try? store.saveReceipt(ToolReceipt(turn: turn, call: call.call, name: call.name, fingerprint: fingerprint,
+                                                   ok: false, result: nil, error: message, changes: [], at: now()))
+            }
             return .failed(message)
         }
+    }
+
+    /// The stored answer for a call id seen before, when it is the same call. A different call under a used id (a PC
+    /// that restarted and counts c-1, c-2 … again for the same turn) is refused, never answered with another call's
+    /// result.
+    private func replay(_ earlier: ToolReceipt, of call: ToolCall, _ fingerprint: String) -> ToolOutcome {
+        guard earlier.fingerprint == fingerprint else {
+            return .failed("This call id was already used for a different call in this reply, so nothing was done. "
+                           + "Ask again in a new message.")
+        }
+        return earlier.outcome
+    }
+
+    /// An earlier write's changes are all still there exactly as it left them (none undone, edited or deleted since):
+    /// only then does the same call again mean "the model repeated itself".
+    private func stillInPlace(_ r: ToolReceipt) throws -> Bool {
+        guard !r.changes.isEmpty else { return false }
+        for c in r.changes {
+            if c.undone { return false }
+            if let after = c.after {
+                guard try current(after) == after else { return false }
+            } else if let before = c.before, try current(before) != nil {
+                return false
+            }
+        }
+        return true
     }
 
     static func message(for error: Error) -> String {
@@ -118,6 +148,11 @@ final class ToolRunner: @unchecked Sendable {
                     }
                 } else if let before = c.before, try current(before) != nil {
                     return .changedSince("It's back already, so Undo left it as it is.")
+                }
+                if case .exercise(let x)? = c.after, c.before == nil,
+                   try store.sessions(in: DateInterval(start: .distantPast, end: .distantFuture))
+                       .contains(where: { s in s.exercises.contains { $0.exerciseID == x.id } }) {
+                    return .changedSince("A workout still uses \(x.name); undo that workout first.")
                 }
                 if let before = c.before { try save(before) } else if let after = c.after { try delete(after) }
                 r.changes[index].undone = true

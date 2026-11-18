@@ -239,8 +239,8 @@ final class InMemoryStore: GupFitStore, @unchecked Sendable {
 
     func receipt(turn: String, call: String) -> ToolReceipt? { locked { receipts["\(turn)\n\(call)"] } }
 
-    func receipt(turn: String, fingerprint: String) -> ToolReceipt? {
-        locked { receipts.values.filter { $0.turn == turn && $0.fingerprint == fingerprint && $0.ok }.min { $0.at < $1.at } }
+    func receipts(turn: String, fingerprint: String) -> [ToolReceipt] {
+        locked { receipts.values.filter { $0.turn == turn && $0.fingerprint == fingerprint && $0.ok } }
     }
 
     func saveReceipt(_ receipt: ToolReceipt) { locked { receipts["\(receipt.turn)\n\(receipt.call)"] = receipt } }

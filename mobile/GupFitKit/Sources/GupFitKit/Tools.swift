@@ -104,8 +104,8 @@ struct ToolReceipt: Codable, Equatable, Sendable {
 /// Where receipts are kept: the same database as the data they describe.
 protocol ToolReceiptRepository: AnyObject {
     func receipt(turn: String, call: String) throws -> ToolReceipt?
-    /// the successful write in `turn` with this fingerprint, if there is one
-    func receipt(turn: String, fingerprint: String) throws -> ToolReceipt?
+    /// the successful writes in `turn` with this fingerprint
+    func receipts(turn: String, fingerprint: String) throws -> [ToolReceipt]
     /// inserts, or replaces the receipt of the same (turn, call) (Undo marks its changes)
     func saveReceipt(_ receipt: ToolReceipt) throws
 }

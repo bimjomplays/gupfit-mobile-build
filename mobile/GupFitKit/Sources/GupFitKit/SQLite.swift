@@ -228,16 +228,18 @@ final class SQLiteDatabase {
     /// become savepoints, so an inner failure the outer code catches only undoes the inner part.
     func transaction<T>(_ body: () throws -> T) throws -> T {
         let savepoint = "sp\(transactionDepth)"
-        try execute(transactionDepth == 0 ? "BEGIN IMMEDIATE" : "SAVEPOINT \(savepoint)")
+        let outer = transactionDepth == 0
+        try execute(outer ? "BEGIN IMMEDIATE" : "SAVEPOINT \(savepoint)")
         transactionDepth += 1
         do {
             let result = try body()
+            // a COMMIT that fails (disk full, I/O) lands in the catch below with the depth still counted once
+            try execute(outer ? "COMMIT" : "RELEASE \(savepoint)")
             transactionDepth -= 1
-            try execute(transactionDepth == 0 ? "COMMIT" : "RELEASE \(savepoint)")
             return result
         } catch {
             transactionDepth -= 1
-            if transactionDepth == 0 {
+            if outer {
                 try? execute("ROLLBACK")
             } else {
                 try? execute("ROLLBACK TO \(savepoint); RELEASE \(savepoint)")

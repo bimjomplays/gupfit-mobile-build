@@ -130,9 +130,9 @@ final class ToolRunnerTests: XCTestCase {
         XCTAssertEqual(again.result, first.result)
         XCTAssertEqual(again.changes, first.changes)
         XCTAssertEqual(try entries().count, count, "nothing logged twice")
-        // even with other arguments: a call id is answered once
+        // other arguments under the same call id: refused, never run and never answered with the first's result
         let changed = run("log_meal", ["meal": "dinner", "items": [["food_id": "demo-egg", "amount": 9, "unit": "1 large"]]], call: "c-9")
-        XCTAssertEqual(changed.result, first.result)
+        XCTAssertFalse(changed.ok)
         XCTAssertEqual(try entries().count, count)
     }
 
@@ -159,6 +159,54 @@ final class ToolRunnerTests: XCTestCase {
         XCTAssertFalse(replay.ok)
         XCTAssertTrue(replay.replayed)
         XCTAssertFalse(run("log_meal", bad).replayed, "only successful writes are deduplicated")
+    }
+
+    func testTheSameCallAfterTheFirstWasChangedRunsAgain() throws {
+        // the model corrects itself: 2, then 1, then 2 again is three real edits
+        for amount in [2.0, 1, 2] {
+            let out = run("edit_meal_entry", ["entry_id": "demo-e4", "amount": .number(amount)])
+            XCTAssertTrue(out.ok, out.error ?? "")
+            XCTAssertEqual(out.changes.count, 1, "amount \(amount) was really saved")
+            XCTAssertEqual(try store.entry(id: "demo-e4")?.portion.count, amount)
+        }
+        // … and then the same 2 once more really is a repeat
+        XCTAssertTrue(run("edit_meal_entry", ["entry_id": "demo-e4", "amount": 2]).changes.isEmpty)
+
+        // logged, deleted, logged again: the second log is a new entry
+        let apple: JSONValue = ["meal": "snack", "items": [["name": "Apple", "calories": 95, "amount": 1]]]
+        let first = run("log_meal", apple)
+        let id = try XCTUnwrap(first.result?["logged"]?.array?.first?["entry_id"]?.string)
+        XCTAssertTrue(run("delete_meal_entry", ["entry_id": .string(id)]).ok)
+        let again = run("log_meal", apple)
+        XCTAssertEqual(again.changes.count, 1)
+        XCTAssertEqual(try entries().filter { $0.food.name == "Apple" }.count, 1)
+
+        // undone in the app, then asked again: logged again
+        XCTAssertEqual(runner.undo(turn: "turn-1", call: "c-\(calls)", index: 0), .undone)
+        XCTAssertEqual(run("log_meal", apple).changes.count, 1)
+        XCTAssertEqual(try entries().filter { $0.food.name == "Apple" }.count, 1)
+    }
+
+    func testACallIdUsedAgainForAnotherCallIsRefused() throws {
+        // a PC that restarted mid-turn counts c-1, c-2 … again: an old answer must never stand in for a new call
+        XCTAssertTrue(run("search_foods", ["query": "egg"], call: "c-1").ok)
+        let before = try entries()
+        let other = run("log_meal", ["meal": "breakfast", "items": [["food_id": "demo-egg", "amount": 2, "unit": "1 large"]]], call: "c-1")
+        XCTAssertFalse(other.ok)
+        XCTAssertEqual(other.error?.hasPrefix("This call id was already used for a different call"), true)
+        XCTAssertEqual(try entries(), before)
+        XCTAssertTrue(run("search_foods", ["query": "egg"], call: "c-1").replayed, "the same call still replays")
+    }
+
+    func testUndoOfANewExerciseWaitsForTheWorkoutThatUsesIt() throws {
+        XCTAssertTrue(run("log_workout", ["exercises": [["name": "Dips", "sets": [["reps": 12]]]]]).ok)
+        let call = "c-\(calls)"
+        XCTAssertEqual(runner.undo(turn: "turn-1", call: call, index: 0),
+                       .changedSince("A workout still uses Dips; undo that workout first."))
+        XCTAssertTrue(store.exercises().contains { $0.name == "Dips" })
+        XCTAssertEqual(runner.undo(turn: "turn-1", call: call, index: 1), .undone)
+        XCTAssertEqual(runner.undo(turn: "turn-1", call: call, index: 0), .undone)
+        XCTAssertFalse(store.exercises().contains { $0.name == "Dips" })
     }
 
     // MARK: invalid calls change nothing
@@ -351,7 +399,7 @@ final class ToolRunnerTests: XCTestCase {
         XCTAssertEqual(runner.undo(turn: "turn-1", call: "c-\(calls)", index: 0), .undone)
         XCTAssertEqual(try entries(), before)
 
-        XCTAssertTrue(run("log_workout", ["exercises": [["name": "Dips", "sets": [["reps": 12]]]]]).ok)
+        XCTAssertTrue(run("log_workout", ["exercises": [["name": "Lunges", "sets": [["reps": 12]]]]]).ok)
         XCTAssertEqual(runner.undo(turn: "turn-1", call: "c-\(calls)", index: 1), .undone)
         XCTAssertEqual(runner.undo(turn: "turn-1", call: "c-\(calls)", index: 0), .undone)
         XCTAssertEqual(store.exercises().count, 3)
